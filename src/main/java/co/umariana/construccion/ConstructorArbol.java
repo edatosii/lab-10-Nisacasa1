@@ -2,6 +2,11 @@ package co.umariana.construccion;
 
 import co.umariana.modelo.ArbolGenealogico;
 import co.umariana.modelo.ArbolInvalidoException;
+import co.umariana.modelo.Persona;
+import co.umariana.modelo.Posicion;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * Construye un árbol genealógico a partir de un texto: cada línea es una persona.
@@ -51,7 +56,107 @@ public final class ConstructorArbol {
      * @throws ArbolInvalidoException si el texto no cumple las reglas
      */
     public static ArbolGenealogico construir(String texto) {
-        // TODO Etapa 3
-        throw new UnsupportedOperationException("TODO: construir");
+        if (texto == null) {
+            throw new ArbolInvalidoException(TEXTO_VACIO);
+        }
+
+        // 1) Leer cada línea con contenido y convertirla en una persona válida, recordando su número de línea.
+        String[] lineas = texto.split("\n", -1);
+        List<Linea> leidas = new ArrayList<>();
+        Linea sujeto = null;
+        for (int i = 0; i < lineas.length; i++) {
+            if (lineas[i].isBlank()) {
+                continue;
+            }
+            Linea linea = new Linea(i + 1, leerPersona(i + 1, lineas[i]));
+            String posicion = linea.persona.getPosicion();
+            for (Linea anterior : leidas) {
+                if (anterior.persona.getPosicion().equals(posicion)) {
+                    throw error(linea.numero, "la posición " + posicion + " está repetida.");
+                }
+            }
+            leidas.add(linea);
+            if (Posicion.esSujeto(posicion)) {
+                sujeto = linea;
+            }
+        }
+
+        if (leidas.isEmpty()) {
+            throw new ArbolInvalidoException(TEXTO_VACIO);
+        }
+        if (sujeto == null) {
+            throw new ArbolInvalidoException("Falta el sujeto: debe haber una línea con la posición 1.");
+        }
+
+        // 2) Ordenar para que cada persona se agregue después de la que necesita: primero los ascendientes por
+        //    número Ahnentafel (el hijo n / 2 siempre es menor) y luego los descendientes por generación.
+        leidas.remove(sujeto);
+        leidas.sort(Comparator.comparingInt(ConstructorArbol::ordenDeLlegada));
+
+        // 3) Armar el árbol. Las reglas (hijo o progenitor existente, años) las valida el propio árbol.
+        ArbolGenealogico arbol = new ArbolGenealogico(sujeto.persona);
+        for (Linea linea : leidas) {
+            try {
+                arbol.agregar(linea.persona);
+            } catch (IllegalArgumentException e) {
+                throw error(linea.numero, e.getMessage());
+            }
+        }
+        return arbol;
+    }
+
+    private static final String TEXTO_VACIO = "El texto está vacío: escriba al menos la línea del sujeto (posición 1).";
+
+    /** Una persona leída del texto junto con el número de la línea en que estaba. */
+    private static final class Linea {
+        final int numero;
+        final Persona persona;
+
+        Linea(int numero, Persona persona) {
+            this.numero = numero;
+            this.persona = persona;
+        }
+    }
+
+    /** Convierte una línea "posicion;nombre;nacimiento;fallecimiento" en una persona válida. */
+    private static Persona leerPersona(int numero, String linea) {
+        String[] campos = linea.split(";", -1);
+        if (campos.length < 3 || campos.length > 4) {
+            throw error(numero, "debe tener el formato posicion;nombre;nacimiento;fallecimiento.");
+        }
+        String posicion = campos[0].trim();
+        String nombre = campos[1].trim();
+        int nacimiento = leerAnio(numero, campos[2].trim(), "nacimiento");
+        String textoFallecimiento = campos.length == 4 ? campos[3].trim() : "";
+        Integer fallecimiento = textoFallecimiento.isEmpty() ? null : leerAnio(numero, textoFallecimiento, "fallecimiento");
+
+        Persona persona = new Persona(posicion, nombre, nacimiento, fallecimiento);
+        try {
+            persona.validar();
+        } catch (IllegalArgumentException e) {
+            throw error(numero, e.getMessage());
+        }
+        return persona;
+    }
+
+    private static int leerAnio(int numero, String texto, String campo) {
+        try {
+            return Integer.parseInt(texto);
+        } catch (NumberFormatException e) {
+            throw error(numero, "el año de " + campo + " debe ser un número entero, no \"" + texto + "\".");
+        }
+    }
+
+    /** Ascendientes primero (por su número Ahnentafel, hasta 2047) y después los descendientes por generación. */
+    private static int ordenDeLlegada(Linea linea) {
+        String posicion = linea.persona.getPosicion();
+        if (Posicion.esAscendiente(posicion)) {
+            return Integer.parseInt(posicion);
+        }
+        return Posicion.MAX_AHNENTAFEL + Posicion.generacion(posicion);
+    }
+
+    private static ArbolInvalidoException error(int numero, String mensaje) {
+        return new ArbolInvalidoException("Línea " + numero + ": " + mensaje);
     }
 }
